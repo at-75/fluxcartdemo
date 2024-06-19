@@ -96,9 +96,3 @@ def create_item(contact: InputContact, db: Session = Depends(get_db)):
             "secondaryContactIds": secondary_ids
         }
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
