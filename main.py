@@ -40,11 +40,11 @@ class ContactModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, index=True)
     phone = Column(String, index=True)
-    linkedId = Column(Integer,nullable=True)
+    linkedId = Column(Integer, nullable=True)
     linkPrecedence = Column(String)
     createdAt = Column(DateTime, default=datetime.now())
     updatedAt = Column(DateTime, default=datetime.now())
-    deletedAt = Column(DateTime, default=datetime.now())
+    deletedAt = Column(DateTime, default=None)
 
 
 class InputContact(BaseModel):
@@ -65,21 +65,34 @@ def get_db() -> Session:
 
 @app.post("/identify")
 def create_item(contact: InputContact, db: Session = Depends(get_db)):
-
-    #if doesnt exists create one
-    #if only email exists -secondary
-    #if only phone exists -secondary
-    #if both exists
-
-    db_item = ContactModel(
-        email=contact.email,
-        phone=contact.phone
-    )
-    print(db_item)
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
-    return {"message": "Item created successfully", "item_id": db_item.id}
+    existing_email = db.query(ContactModel).filter(
+        contact.email == ContactModel.email
+        and ContactModel.linkPrecedence == 'PRIMARY').first()
+    existing_phone = db.query(ContactModel).filter(
+        contact.phone == ContactModel.phone
+        and ContactModel.linkPrecedence == 'PRIMARY').first()
+    if not existing_email and not existing_phone:
+        db_item = ContactModel(
+            email=contact.email,
+            phone=contact.phone,
+            linkPrecedence='PRIMARY'
+        )
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+        return {"message": "Item created successfully", "item_id": db_item.id}
+    elif existing_email and not existing_phone:
+        db_item = ContactModel(
+            email=contact.email,
+            phone=contact.phone,
+            linkedId=existing_email.id,
+            linkPrecedence='SECONDARY'
+        )
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+    else:
+        return {"message": "Item already exists"}
 
 
 if __name__ == "__main__":
