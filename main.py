@@ -5,44 +5,17 @@ from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Integer, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from db_model import ContactModel
+from input_model import InputContact
+from fetch_db_url import postgres_url
 
-sql_ddl = 'sqls/contact-ddl.sql'
-with open(sql_ddl, 'r') as f:
-    sql_init = f.read()
-
-load_dotenv()
 app = FastAPI()
+load_dotenv()
 
-DB_USER = os.getenv('PGUSER')
-DB_PASSWORD = os.getenv('PGPASSWORD')
-DB_HOST = os.getenv('PGHOST')
-DB_NAME = os.getenv('PGDATABASE')
-
-SQLALCHEMY_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-
+postgres_prod_url = postgres_url()
+engine = create_engine(postgres_prod_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
-
-
-class ContactModel(Base):
-    __tablename__ = "contact"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    email = Column(String, index=True)
-    phone = Column(String, index=True)
-    linkedId = Column(Integer, nullable=True)
-    linkPrecedence = Column(String)
-    createdAt = Column(DateTime, default=datetime.now())
-    updatedAt = Column(DateTime, default=datetime.now())
-    deletedAt = Column(DateTime, default=None)
-
-
-class InputContact(BaseModel):
-    email: str
-    phone: str
-
-
 Base.metadata.create_all(bind=engine)
 
 
@@ -54,7 +27,7 @@ def get_db() -> Session:
         db.close()
 
 
-#This is our identify logic to handle queries
+# This is our identify logic to handle queries
 @app.post("/identify")
 def create_item(contact: InputContact, db: Session = Depends(get_db)):
     existing_emails = db.query(ContactModel).filter(
@@ -105,17 +78,16 @@ def create_item(contact: InputContact, db: Session = Depends(get_db)):
             existing_email.linkPrecedence = 'SECONDARY'
             db.commit()
             db.refresh(existing_email)
-
-    required_rows = db.query(ContactModel).filter(ContactModel.id == primary_contact_id or
-                                                  ContactModel.linkedId == primary_contact_id)
-    emails = set()
-    phones = set()
+    primary_row = db.query(ContactModel).filter(ContactModel.id == primary_contact_id).first()
+    secondary_rows = db.query(ContactModel).filter(ContactModel.linkedId == primary_contact_id)
+    emails = {primary_row.email}
+    phones = {primary_row.phone}
     secondary_ids = []
-    for row in required_rows:
-        emails.add(row.email)
-        phones.add(row.phone)
-        if row.id != primary_contact_id:
-            secondary_ids.append(row.id)
+    for s_row in secondary_rows:
+        emails.add(s_row.email)
+        phones.add(s_row.phone)
+        secondary_ids.append(s_row.id)
+
     return {
         "contact": {
             "primaryContactId": primary_contact_id,
