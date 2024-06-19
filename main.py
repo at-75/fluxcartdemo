@@ -1,8 +1,5 @@
 import os
 from datetime import datetime
-
-import psycopg2
-from os import getenv
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
@@ -14,12 +11,6 @@ with open(sql_ddl, 'r') as f:
     sql_init = f.read()
 
 load_dotenv()
-# conn = psycopg2.connect(database=getenv('PGDATABASE'),
-#                         user=getenv('PGUSER'),
-#                         host=getenv('PGHOST'),
-#                         password=getenv('PGPASSWORD'),
-#                         port=5432)
-
 app = FastAPI()
 
 DB_USER = os.getenv('PGUSER')
@@ -63,14 +54,18 @@ def get_db() -> Session:
         db.close()
 
 
+#This is our identify logic to handle queries
 @app.post("/identify")
 def create_item(contact: InputContact, db: Session = Depends(get_db)):
-    existing_email = db.query(ContactModel).filter(
+    existing_emails = db.query(ContactModel).filter(
         contact.email == ContactModel.email
-        and ContactModel.linkPrecedence == 'PRIMARY').first()
-    existing_phone = db.query(ContactModel).filter(
+        and ContactModel.linkPrecedence == 'PRIMARY')
+    existing_email = existing_emails.first()
+    existing_phones = db.query(ContactModel).filter(
         contact.phone == ContactModel.phone
-        and ContactModel.linkPrecedence == 'PRIMARY').first()
+        and ContactModel.linkPrecedence == 'PRIMARY')
+    existing_phone = existing_phones.first()
+    primary_contact_id = ""
     if not existing_email and not existing_phone:
         db_item = ContactModel(
             email=contact.email,
@@ -80,8 +75,9 @@ def create_item(contact: InputContact, db: Session = Depends(get_db)):
         db.add(db_item)
         db.commit()
         db.refresh(db_item)
-        return {"message": "Item created successfully", "item_id": db_item.id}
+        primary_contact_id = db_item.id
     elif existing_email and not existing_phone:
+        primary_contact_id = existing_email.id
         db_item = ContactModel(
             email=contact.email,
             phone=contact.phone,
@@ -91,8 +87,43 @@ def create_item(contact: InputContact, db: Session = Depends(get_db)):
         db.add(db_item)
         db.commit()
         db.refresh(db_item)
+    elif not existing_email and existing_phone:
+        primary_contact_id = existing_phone.id
+        db_item = ContactModel(
+            email=contact.email,
+            phone=contact.phone,
+            linkedId=existing_phone.id,
+            linkPrecedence='SECONDARY'
+        )
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
     else:
-        return {"message": "Item already exists"}
+        if existing_phone.id != existing_email.id:
+            primary_contact_id = existing_phone.id
+            existing_email.linkedId = existing_phone.id
+            existing_email.linkPrecedence = 'SECONDARY'
+            db.commit()
+            db.refresh(existing_email)
+
+    required_rows = db.query(ContactModel).filter(ContactModel.id == primary_contact_id or
+                                                  ContactModel.linkedId == primary_contact_id)
+    emails = set()
+    phones = set()
+    secondary_ids = []
+    for row in required_rows:
+        emails.add(row.email)
+        phones.add(row.phone)
+        if row.id != primary_contact_id:
+            secondary_ids.append(row.id)
+    return {
+        "contact": {
+            "primaryContactId": primary_contact_id,
+            "emails": list(emails),
+            "phoneNumbers": list(phones),
+            "secondaryContactIds": secondary_ids
+        }
+    }
 
 
 if __name__ == "__main__":
